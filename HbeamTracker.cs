@@ -23,11 +23,11 @@ namespace PYV_MaterialScanner
     public class LabelDetectionResult : IDisposable
     {
         public bool IsDetected { get; set; }
-        public Point[] ResultPoints { get; set; }
+        public Point[]? ResultPoints { get; set; }
         public Point Center { get; set; }
-        public Mat CroppedLabel { get; set; }
-        public string DetectionMethod { get; set; } // "QRDetector" or "EdgeDetection"
-        public string DecodedText { get; set; } // QR 디코딩 성공 시
+        public Mat? CroppedLabel { get; set; }
+        public string? DetectionMethod { get; set; } // "QRDetector" or "EdgeDetection"
+        public string? DecodedText { get; set; } // QR 디코딩 성공 시
 
         public void Dispose()
         {
@@ -50,14 +50,13 @@ namespace PYV_MaterialScanner
         // QR 코드 디텍터
         private QRCodeDetector _qrDetector = new QRCodeDetector();
         private readonly ZXing.Windows.Compatibility.BarcodeReader _barcodeReader;
-        private WeChatQRCode _weChatQrDetector; //weChat
+        private WeChatQRCode? _weChatQrDetector; //weChat
 
         private double _scaleFactor = 1.8;
 
         // 디버그 모드
         private volatile bool _debugMode = false;
         private string _debugFolder = @"C:\Debug";
-        private string _debugPath = "";
 
 
         public HbeamTracker()
@@ -132,174 +131,85 @@ namespace PYV_MaterialScanner
 
             try
             {
-                // 트래킹(위치 추적)은 고정된 작은 해상도(640px)에서 수행되어야 합니다.
-                // 그래야만 형태학적 필터(21x21 커널 등)가 해상도에 상관없이 점들을 하나의 사각형으로 뭉개줄 수 있습니다.
-                using Mat small = new Mat();
-                double scale = 1.0;
+                // 1. 빠른 연산을 위해 다운스케일링
                 int targetWidth = 800;
+                double scale = (double)sourceFrame.Width / targetWidth;
+                using Mat small = new Mat();
+                Cv2.Resize(sourceFrame, small, new Size(targetWidth, (int)(sourceFrame.Height / scale)));
 
-                if (sourceFrame.Width > targetWidth)
-                {
-                    scale = (double)sourceFrame.Width / targetWidth;
-                    Cv2.Resize(sourceFrame, small, new Size(targetWidth, (int)(sourceFrame.Height / scale)), 0, 0, InterpolationFlags.Area);
-                }
-                else
-                {
-                    sourceFrame.CopyTo(small);
-                    scale = 1.0;
-                }
-
-                // Convert Gray
+                // 2. Grayscale 후 가벼운 블러
                 using Mat gray = new Mat();
-                if (small.Channels() == 3) Cv2.CvtColor(small, gray, ColorConversionCodes.BGR2GRAY);
-                else small.CopyTo(gray);
+                Cv2.CvtColor(small, gray, ColorConversionCodes.BGR2GRAY);
+                Cv2.GaussianBlur(gray, gray, new Size(5, 5), 0);
 
-
-                // 흐릿한 회색빛(저대비)을 살려내기 위한 대비 향상
-                using (var clahe = Cv2.CreateCLAHE(clipLimit: 3.0, tileGridSize: new Size(8, 8)))
-                {
-                    clahe.Apply(gray, gray);
-                }
-
-                // Scharr 연산: 가로/세로 방향의 강력한 픽셀 변화량(엣지)만 찾습니다.
-                // 바코드는 좁은 공간에 픽셀 변화량이 극한으로 집중되는 성질을 이용합니다.
-                using Mat gradX = new Mat();
-                using Mat gradY = new Mat();
-                Cv2.Scharr(gray, gradX, MatType.CV_32F, 1, 0);
-                Cv2.Scharr(gray, gradY, MatType.CV_32F, 0, 1);
-
-                using Mat absGradX = new Mat();
-                using Mat absGradY = new Mat();
-                Cv2.ConvertScaleAbs(gradX, absGradX);
-                Cv2.ConvertScaleAbs(gradY, absGradY);
-
-                using Mat grad = new Mat();
-                Cv2.AddWeighted(absGradX, 0.5, absGradY, 0.5, 0, grad);
-
-
-                // 오직 날카롭고 강한 엣지(흑/백이 교차하는 QR 모듈)만 남깁니다. 임계값 60!
-                using Mat strongEdges = new Mat();
-                Cv2.Threshold(grad, strongEdges, 60, 255, ThresholdTypes.Binary);
-
-                // White Top-Hat Transform
-                // 거친 쇳덩이 표면과 전체적인 조명 얼룩은 0(흑백)으로 날려버리고,
-                // 71x71 크기보다 작으면서 주변보다 '눈에 띄게 하얀색'인 덩어리만 추출
-                using Mat tophat = new Mat();
-                using Mat thKernel = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(71, 71));
-                Cv2.MorphologyEx(gray, tophat, MorphTypes.TopHat, thKernel);
-
-                // 이진화 (Top-Hat 결과에서 유의미한 밝은 덩어리만 추출)
+                // 3. 밝은 영역 추출
                 using Mat binary = new Mat();
-                Cv2.Threshold(tophat, binary, 40, 255, ThresholdTypes.Binary);
+                Cv2.Threshold(gray, binary, 160, 255, ThresholdTypes.Binary);
 
+                // 4. 모폴로지 Close (커널 크기를 15x15로 줄여 작은 라벨이 주변 노이즈와 뭉치는 현상 방지)
+                using Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(15, 15));
+                Cv2.MorphologyEx(binary, binary, MorphTypes.Close, kernel);
 
-
-                // 모폴로지 Close: 하얀 바탕 안의 까만색 QR 점들을 메워 하나의 완벽한 사각형으로 복원
-                using Mat closeKernel = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(15, 15));
-                Cv2.MorphologyEx(binary, binary, MorphTypes.Close, closeKernel);
-
-                // 모폴로지 Open: H빔의 자잘한 흰색 점(먼지) 제어
-                using Mat openKernel = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(5, 5));
-                Cv2.MorphologyEx(binary, binary, MorphTypes.Open, openKernel);
-
-
-
-
-                // 덩어리(외곽선) 찾기
-                Cv2.FindContours(binary, out Point[][] contours, out HierarchyIndex[] hierarchy, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
-
+                // 5. 외곽선(Contour) 탐색
+                Cv2.FindContours(binary, out Point[][] contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
 
                 Rect? bestRect = null;
-                double maxScore = 0;
-                double maxAllowedRectArea = small.Width * small.Height * 0.15; // 라벨은 최대 15%를 넘지 않음
+                double bestScore = 0;
+                double totalArea = small.Width * small.Height;
 
                 foreach (var contour in contours)
                 {
                     Rect rect = Cv2.BoundingRect(contour);
                     double rectArea = rect.Width * rect.Height;
 
-                    // 필터 1: 박스 크기 제한 (먼지와 10% 이상의 거대 덩어리 제거)
-                    if (rectArea < 300 || rectArea > maxAllowedRectArea) continue;
+                    // [개선 1] 면적 제한 대폭 강화 (거대한 롤러 반사광 원천 차단)
+                    // 라벨은 전체 4K 화면에서 매우 작으므로 0.2% ~ 5% 사이로 타이트하게 제한
+                    if (rectArea < totalArea * 0.002 || rectArea > totalArea * 0.05) continue;
 
-                    // 필터 2: 비율 필터 너무 얇은 선이나 극단적인 형태 제거
-                    double aspect = (double)rect.Width / rect.Height;
-                    if (aspect < 0.4 || aspect > 2.5) continue;
+                    // [개선 2] 종횡비 제한 (정사각형 ~ 약간 긴 직사각형)
+                    double aspect = (double)Math.Max(rect.Width, rect.Height) / Math.Min(rect.Width, rect.Height);
+                    if (aspect > 1.8) continue;
 
-                    // 방어막 1: 다각형 밀집도 (Solidity)
-                    // 노이즈 점들이 모여 네모 껍데기를 만든 경우를 차단 (내부가 45% 이상 꽉 차야 함)
+                    // [개선 3] Solidity (사각형 형태 채움률)
                     Point[] hull = Cv2.ConvexHull(contour);
                     double hullArea = Cv2.ContourArea(hull);
                     if (hullArea <= 0) continue;
                     double solidity = Cv2.ContourArea(contour) / hullArea;
-                    if (solidity < 0.60) continue;
+                    if (solidity < 0.70) continue;
 
+                    // [개선 4] 텍스처(표준편차) 검증 강화
+                    using Mat roi = new Mat(gray, rect);
+                    Cv2.MeanStdDev(roi, out Scalar mean, out Scalar stddev);
 
-                    // 필터 3: 내부 패턴의 흑백 편차(StdDev)를 통한 '진짜 QR 라벨' 검증
-                    // Top-Hat은 '빛 반사'와 '라벨'을 둘 다 뽑아냅니다.
-                    // 빛 반사는 내부가 단색이라 표준편차가 10 이하로 떨어집니다. (가차없이 탈락!)
-                    // QR 라벨은 검은 잉크와 흰 바탕 덕분에 무조건 표준편차가 20~40 이상 치솟습니다.
-                    using Mat roiGray = new Mat(gray, rect);
-                    Cv2.MeanStdDev(roiGray, out Scalar mean, out Scalar stddev);
-                    double roiStdDev = stddev.Val0;
-                    double roiMean = mean.Val0;
+                    // 밋밋한 쇳덩이 반사광(stddev < 20)을 버리고, 흑백 대비가 강한 라벨(stddev > 30)만 통과
+                    if (mean.Val0 < 130 || stddev.Val0 < 30) continue;
 
-                    if (roiStdDev < 20) continue;
-                    if (roiMean < 85) continue;
+                    // [개선 5] 스코어링 공식 변경 (면적 가중치 배제)
+                    // 오직 "질감의 뚜렷함(표준편차)"과 "사각형에 가까운 정도(Solidity)"만 곱해서 평가
+                    double score = stddev.Val0 * solidity;
 
-                    // 쇳덩이 빛 반사는 내부가 거의 90% 이상 새하얗습니다.
-                    // 진짜 QR코드는 흑/백 격자가 섞여 있어 이진화 시 하얀색 픽셀 비율이 30%~70% 내외입니다.
-                    using Mat roiBinary = new Mat();
-                    Cv2.Threshold(roiGray, roiBinary, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-                    double whiteRatio = (double)Cv2.CountNonZero(roiBinary) / rectArea;
-
-                    if (whiteRatio < 0.20 || whiteRatio > 0.80) continue;
-
-                    // 필터 4: 엣지 밀집도 (Gradient)
-                    // 거친 쇳덩이도 엣지는 높지만, 쇳덩이는 이미 위쪽의 Top-Hat에서 다 걸러져서 여기까지 오지도 못합니다.
-                    using Mat roiGrad = new Mat(grad, rect);
-                    double edgeDensity = Cv2.Mean(roiGrad).Val0;
-
-                    if (edgeDensity < 25) continue;
-
-                    // 최종 채점: 엣지 점수 * 대비 점수 * 면적(크기 가점)
-                    // (작은 쇳조각이나 먼지가 1등을 먹지 못하도록 확실히 면적 보정치 추가)
-                    double score = edgeDensity * roiStdDev * Math.Sqrt(rectArea);
-
-                    if (score > maxScore)
+                    if (score > bestScore)
                     {
-                        maxScore = score;
+                        bestScore = score;
                         bestRect = rect;
                     }
                 }
 
+                // 최적의 라벨 영역 반환
                 if (bestRect.HasValue)
                 {
-                    // 640px 화면에서 찾은 덩어리의 좌표를 원본 4K 크롭 해상도로 복원
                     Rect finalRect = new Rect(
-                        (int)(bestRect.Value.X * scale),
-                        (int)(bestRect.Value.Y * scale),
-                        (int)(bestRect.Value.Width * scale),
-                        (int)(bestRect.Value.Height * scale)
+                        (int)(bestRect.Value.X * scale), (int)(bestRect.Value.Y * scale),
+                        (int)(bestRect.Value.Width * scale), (int)(bestRect.Value.Height * scale)
                     );
 
-                    // QR 주변의 필수 여백(Quiet Zone) 확보를 위해 상하좌우 20% 확장
-                    int paddingX = (int)(finalRect.Width * 0.2);
-                    int paddingY = (int)(finalRect.Height * 0.2);
-                    finalRect.Inflate(paddingX, paddingY);
-
-                    // 화면 경계를 벗어나지 않도록 안전 클램핑
-                    finalRect.X = Math.Max(0, finalRect.X);
-                    finalRect.Y = Math.Max(0, finalRect.Y);
-                    finalRect.Width = Math.Min(sourceFrame.Width - finalRect.X, finalRect.Width);
-                    finalRect.Height = Math.Min(sourceFrame.Height - finalRect.Y, finalRect.Height);
-
-                    return finalRect;
+                    // [개선 6] 여유 마진 대폭 확대 (15% -> 50%)
+                    finalRect.Inflate((int)(finalRect.Width * 0.50), (int)(finalRect.Height * 0.50));
+                    return GetSafeCropRect(finalRect, sourceFrame.Width, sourceFrame.Height, 0);
                 }
             }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Label tracking error: {ex.Message}");
-            }
+            catch { /* 예외 무시 */ }
+
             return null;
         }
 
@@ -327,9 +237,9 @@ namespace PYV_MaterialScanner
                 }
             }
 
-            string decodedText = null;
-            Point2f[] qrPoints = null;
-            string method = string.Empty;
+            string? decodedText = null;
+            Point2f[]? qrPoints = null;
+            string? method = string.Empty;
 
             try
             {
@@ -393,7 +303,8 @@ namespace PYV_MaterialScanner
                         result.ResultPoints = NormalizeQrPoints(qrPoints);
                         Rect boundingRect = Cv2.BoundingRect(result.ResultPoints);
                         result.Center = new Point(boundingRect.X + boundingRect.Width / 2, boundingRect.Y + boundingRect.Height / 2);
-                        result.CroppedLabel = CropLabelArea(sourceFrame, result.ResultPoints); // 한 번만 Clone 할당 (메모리 누수 방지)
+                        // result.CroppedLabel = CropLabelArea(sourceFrame, result.ResultPoints); // QR코드영역만
+                        result.CroppedLabel = sourceFrame.Clone();
                     }
                     else
                     {
@@ -1067,7 +978,7 @@ namespace PYV_MaterialScanner
                     c: 4);
 
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // 오류발생 시 원본 번환
                 if (processed.Empty()) gray.CopyTo(processed);
@@ -1130,8 +1041,8 @@ namespace PYV_MaterialScanner
 
             try
             {                
-                Mat[] ptsMats = null;
-                string[] results = null;
+                Mat[]? ptsMats = null;
+                string[]? results = null;
                 _weChatQrDetector.DetectAndDecode(img, out ptsMats, out results);
 
                 // Check result

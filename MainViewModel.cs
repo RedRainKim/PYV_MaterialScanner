@@ -6,6 +6,7 @@ using System.Configuration;
 using System.Diagnostics;
 using System.IO;
 using System.Media;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -13,6 +14,9 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Net;
+using System.Net.Http;
+using System.Text;
 
 namespace PYV_MaterialScanner
 {
@@ -25,15 +29,7 @@ namespace PYV_MaterialScanner
 
         // Alarm sound
         private readonly string QrScanSoundFile = "dingdong.wav";
-        private readonly SoundPlayer _soundPlayer;
-
-        // Define crop ROI area
-        private double QR_CROP_RATIO_TOP = 0.2; // default
-        private double QR_CROP_RATIO_BTM = 0.1; // default
-        private double QR_CROP_RATIO_LEFT = 0.1; // default
-        private double QR_CROP_RATIO_RIGHT = 0.1; // default
-
-        private OpenCvSharp.Rect _qrCropRoi = new OpenCvSharp.Rect(0, 0, 0, 0); // QR 코드 검출을 위한 ROI 영역 (필요시 설정)
+        private readonly SoundPlayer? _soundPlayer;
 
         // H-Beam Tracker
         private readonly HbeamTracker _hbeamTracker = new HbeamTracker();
@@ -45,12 +41,12 @@ namespace PYV_MaterialScanner
 
         // Last scaned QR code point
         private OpenCvSharp.Point[]? _lastQrPoints = null;
-        private string _lastQrText;
+        private string? _lastQrText;
         private DateTime _lastQrDetectionTime = DateTime.MinValue;
         private readonly TimeSpan _qrDisplayDuration = TimeSpan.FromSeconds(5); // QR code box display duration
 
         // Reusable WriteableBitmap for better performance
-        private WriteableBitmap _writeableBitmap;
+        private WriteableBitmap? _writeableBitmap;
         private readonly object _bitmapLock = new object();
 
         // 렌더링 상태 플래그 (volatile: 스레드 간 가시성 보장)**
@@ -68,18 +64,28 @@ namespace PYV_MaterialScanner
 
         // 동적 라벨 Tracking
         private OpenCvSharp.Rect? _lastTrackedLabelRect = null;
-        
+
+        // Hikvision ISAPI 설정값 로드
+        private readonly string CAMERA_IP = ConfigurationManager.AppSettings["CameraIP"] ?? "192.168.1.100";
+        private readonly string CAMERA_USER = ConfigurationManager.AppSettings["CameraUser"] ?? "admin";
+        private readonly string CAMERA_PASS = ConfigurationManager.AppSettings["CameraPass"] ?? "12345";
+        private HttpClient? _ptzHttpClient;
+
+        // 줌 제어 커맨드
+        public ICommand ZoomInCommand { get; }
+        public ICommand ZoomOutCommand { get; }
+        public ICommand ZoomStopCommand { get; }
 
         // UI binding
-        private ImageSource _videoSource;
-        public ImageSource VideoSource
+        private ImageSource? _videoSource;
+        public ImageSource? VideoSource
         {
             get => _videoSource;
             set { _videoSource = value; OnPropertyChanged(); }
         }
 
-        private ImageSource _capturedImageSource;
-        public ImageSource CapturedImageSource
+        private ImageSource? _capturedImageSource;
+        public ImageSource? CapturedImageSource
         {
             get => _capturedImageSource;
             set { _capturedImageSource = value; OnPropertyChanged(); }
@@ -115,107 +121,18 @@ namespace PYV_MaterialScanner
             set { _fpsText = value; OnPropertyChanged(); }
         }
 
+        // --------------------------------------------------
         // 스캔 히스토리 (최대 50개)
-        public ObservableCollection<string> ScanHistory { get; set; } = new ObservableCollection<string>();
-
-
-        // ROI Edit Mode
-        private bool _isRoiEditMode = false;
-        public bool IsRoiEditMode
+        // --------------------------------------------------
+        // 데이터를 담을 구조체 클래스를 먼저 만들고, 컬렉션의 타입을 해당 클래스로 지정합니다.
+        public class ScanRecord
         {
-            get => _isRoiEditMode;
-            set
-            {
-                if (_isRoiEditMode != value)
-                {
-                    _isRoiEditMode = value;
-                    OnPropertyChanged();
-                    Log.Info($"ROI Edit Mode changed to: {_isRoiEditMode}");
-                }
-            }
+            public string? Time { get; set; }
+            public string? Data { get; set; }
         }
 
+        public ObservableCollection<ScanRecord> ScanHistory { get; set; } = new ObservableCollection<ScanRecord>();
 
-        // Crop Ration Top (10% ~ 40%)
-        private int _cropRatioTop = 20; // Default 20%
-        public int CropRatioTop
-        {
-            get => _cropRatioTop;
-            set
-            {
-                // 입력값은 10~40 사이로 제한
-                int newValue = Math.Max(0, Math.Min(70, value));
-                if (_cropRatioTop != newValue)
-                {
-                    _cropRatioTop = newValue;
-                    OnPropertyChanged();
-
-                    // 실제 사용하는 비율 변수 업데이트 및 ROI 재생성
-                    QR_CROP_RATIO_TOP = _cropRatioTop / 100.0;
-
-                    // ROI를 즉시 리셋하여 다음 프레임에서 다시 계산하도록 함
-                    _qrCropRoi.Width = 0;
-                    Log.Info($"QR Crop Ratio changed to: {QR_CROP_RATIO_TOP:F2}");
-                }
-            }
-        }
-
-        // Crop Ration Bottom (10% ~ 40%)
-        private int _cropRatioBtm = 20; // Default 20%
-        public int CropRatioBtm
-        {
-            get => _cropRatioBtm;
-            set
-            {
-                int newValue = Math.Max(0, Math.Min(70, value));
-                if (_cropRatioBtm != newValue)
-                {
-                    _cropRatioBtm = newValue;
-                    OnPropertyChanged();
-                    QR_CROP_RATIO_BTM = _cropRatioBtm / 100.0;
-                    _qrCropRoi.Width = 0; // Reset ROI
-                    Log.Info($"QR Crop Ratio Bottom changed to: {QR_CROP_RATIO_BTM:F2}");
-                }
-            }
-        }
-
-        // Crop Ration Left (10% ~ 40%)
-        private int _cropRatioLeft = 20; // Default 20%
-        public int CropRatioLeft
-        {
-            get => _cropRatioLeft;
-            set
-            {
-                int newValue = Math.Max(0, Math.Min(70, value));
-                if (_cropRatioLeft != newValue)
-                {
-                    _cropRatioLeft = newValue;
-                    OnPropertyChanged();
-                    QR_CROP_RATIO_LEFT = _cropRatioLeft / 100.0;
-                    _qrCropRoi.Width = 0; // Reset ROI
-                    Log.Info($"QR Crop Ratio Left changed to: {QR_CROP_RATIO_LEFT:F2}");
-                }
-            }
-        }
-
-        // Crop Ration Right (10% ~ 40%)
-        private int _cropRatioRight = 20; // Default 20%
-        public int CropRatioRight
-        {
-            get => _cropRatioRight;
-            set
-            {
-                int newValue = Math.Max(0, Math.Min(70, value));
-                if (_cropRatioRight != newValue)
-                {
-                    _cropRatioRight = newValue;
-                    OnPropertyChanged();
-                    QR_CROP_RATIO_RIGHT = _cropRatioRight / 100.0;
-                    _qrCropRoi.Width = 0; // Reset ROI
-                    Log.Info($"QR Crop Ratio Right changed to: {QR_CROP_RATIO_RIGHT:F2}");
-                }
-            }
-        }
 
         // 명령 (Reconnect Button에 바인딩)
         public ICommand ConnectCommand { get; }
@@ -242,6 +159,17 @@ namespace PYV_MaterialScanner
                 MessageBox.Show($"폴더 열기 실패: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         });
+
+        public string AppTitleWithVersion
+        {
+            get
+            {
+                var ver = Assembly.GetEntryAssembly()?.GetName().Version;
+                // 예: 3.6.0 형태 (뒤에 0이 붙으면 Major.Minor.Build 까지만 표시)
+                string verStr = ver != null ? $"ver_{ver.Major}.{ver.Minor}.{ver.Build}" : "ver_1.0.0";
+                return $"PY-Vina RHF Charge Material Scanner {verStr}";
+            }
+        }
 
         /// <summary>
         /// MainViewModel Construction
@@ -281,11 +209,20 @@ namespace PYV_MaterialScanner
                 Log.Warn($"Sound file not found: {soundFilePath}");
             }
 
-            // Crop ratio
-            _cropRatioTop = (int)(QR_CROP_RATIO_TOP * 100);
-            _cropRatioBtm = (int)(QR_CROP_RATIO_BTM * 100);
-            _cropRatioLeft = (int)(QR_CROP_RATIO_LEFT * 100);
-            _cropRatioRight = (int)(QR_CROP_RATIO_RIGHT * 100);
+            // Digest / Basic 인증을 자동 처리하는 HttpClient 생성
+            var handler = new HttpClientHandler
+            {
+                Credentials = new NetworkCredential(CAMERA_USER, CAMERA_PASS)
+            };
+            _ptzHttpClient = new HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromSeconds(2)
+            };
+
+            // 줌 커맨드 연결 (비동기 호출)
+            ZoomInCommand = new RelayCommand(() => _ = ControlHikvisionZoomAsync("zoomin"));
+            ZoomOutCommand = new RelayCommand(() => _ = ControlHikvisionZoomAsync("zoomout"));
+            ZoomStopCommand = new RelayCommand(() => _ = ControlHikvisionZoomAsync("stop"));
 
             // 윈도우 실행 시 자동 연결 시도
             StartStreaming();
@@ -310,7 +247,7 @@ namespace PYV_MaterialScanner
             while (_isCapturing && _capture.IsOpened())
             {
                 DateTime now = DateTime.Now;
-                Mat currentFrame = null;
+                Mat? currentFrame = null;
 
                 // 1. 락을 걸고 가장 최신 프레임만 복사
                 lock (_frameLock)
@@ -334,23 +271,6 @@ namespace PYV_MaterialScanner
                     // Collecting captured frame information and FPS display.
                     CollectFrameInformation(currentFrame, sw, ref frameCount);
 
-                    // 검색 영역 ROI 박스도 표시 (사용자 설정값 사용)
-                    int roiTop = (int)(currentFrame.Height * (_cropRatioTop / 100.0));
-                    int roiBottom = (int)(currentFrame.Height * (_cropRatioBtm / 100.0));
-                    int roiLeft = (int)(currentFrame.Width * (_cropRatioLeft / 100.0));
-                    int roiRight = (int)(currentFrame.Width * (_cropRatioRight / 100.0));
-
-                    // ROI check
-                    roiTop = Math.Max(0, roiTop);
-                    roiLeft = Math.Max(0, roiLeft);
-                    int roiW = Math.Max(1, currentFrame.Width - roiLeft - roiRight);
-                    int roiH = Math.Max(1, currentFrame.Height - roiTop - roiBottom);
-
-                    OpenCvSharp.Rect searchRoi = new OpenCvSharp.Rect(roiLeft, roiTop, roiW, roiH);
-
-                    // Draw ROI Box
-                    Cv2.Rectangle(currentFrame, searchRoi, new Scalar(0, 255, 255), 4);
-
 
                     // ------------------------------------------------------------------------------------------------------------------
                     // ASYNC Label Detection Processing
@@ -366,7 +286,6 @@ namespace PYV_MaterialScanner
                         {
                             // Async task using MAT object,         
                             Mat fullFrameClone = currentFrame.Clone();                               
-                            Mat croppedFrame = new Mat(fullFrameClone, searchRoi).Clone();
 
                             //
                             Task.Run(() =>
@@ -375,46 +294,33 @@ namespace PYV_MaterialScanner
                                 {
                                     // 실시간 하얀색 라벨 트래킹 시각화
                                     //Log.Info("Check Thread speed of Tracking Lable (DetectWhiteLableArea)");
-                                    //OpenCvSharp.Rect? trackedLabelRoi = _hbeamTracker.DetectWhiteLableArea(croppedFrame);
-                                    //OpenCvSharp.Rect finalScanRoi = new OpenCvSharp.Rect(0, 0, croppedFrame.Width, croppedFrame.Height);
-                                    //if (trackedLabelRoi.HasValue)
-                                    //{
-                                    //    //
-                                    //    finalScanRoi = trackedLabelRoi.Value;
+                                    OpenCvSharp.Rect? trackedLabelRoi = _hbeamTracker.DetectWhiteLableArea(fullFrameClone);
 
-                                    //    // 파란색 박스로 추적된 라벨 영역 그리기
-                                    //    _lastTrackedLabelRect = new OpenCvSharp.Rect(
-                                    //        searchRoi.X + finalScanRoi.X,
-                                    //        searchRoi.Y + finalScanRoi.Y,
-                                    //        finalScanRoi.Width,
-                                    //        finalScanRoi.Height
-                                    //        );
-
-                                    //    //
-                                    //}
-
-
-                                    bool labelDetect = true;
-                                    if (labelDetect) 
+                                    if (trackedLabelRoi.HasValue)
                                     {
-                                        //debug speed
-                                        //Log.Info($"Check Thread speed !");
+                                        // 추적된 라벨 영역 오버레이 표시용 업데이트(오프셋 없이 원본 기준 좌표)
+                                        OpenCvSharp.Rect labelRect = trackedLabelRoi.Value;
+
+                                        //파란색 박스로 추적된 라벨 영역 그리기
+                                        _lastTrackedLabelRect = labelRect;
+
+                                        // 라벨 영역만 타이트하게 크롭하여 디코더에 전달 (속도/인식률 극대화)
+                                        using Mat labelCropMat = new Mat(fullFrameClone, labelRect).Clone();
 
                                         // Scanning (3가지 모드)
-                                        //var result = _hbeamTracker.DetectOriginalSizeOnlyEachSteps(croppedFrame);
-                                        //var result = _hbeamTracker.DetectUpscaleSizeEachSteps(croppedFrame);
-                                        //var result = _hbeamTracker.DetectOriginalPreprocessEachSteps(croppedFrame);
+                                        //var result = _hbeamTracker.DetectOriginalSizeOnlyEachSteps(labelCropMat);
+                                        //var result = _hbeamTracker.DetectUpscaleSizeEachSteps(labelCropMat);
+                                        //var result = _hbeamTracker.DetectOriginalPreprocessEachSteps(labelCropMat);
+                                        var result = _hbeamTracker.DetectQR(labelCropMat, QrScanMode.Preprocess);
 
-                                        var result = _hbeamTracker.DetectQR(croppedFrame, QrScanMode.Preprocess);
-
+                                        // 결과 처리
                                         if (result.IsDetected && result.DecodedText != null)
                                         {
-                                            Mat uiLabelFrame = result.CroppedLabel.Clone();
+                                            Mat? uiLabelFrame = result.CroppedLabel.Clone();
                                             var resultPoints = result.ResultPoints;
-                                            string decodedText = result.DecodedText;                                            
-                                            string detectionMethod = result.DetectionMethod;
+                                            string? decodedText = result.DecodedText;
+                                            string? detectionMethod = result.DetectionMethod;
 
-                                            // 결과 처리는 UI 스레드 동기화 필요할 수 있음
                                             Application.Current.Dispatcher.Invoke(() =>
                                             {
                                                 _lastQrDetectionTime = now;
@@ -424,34 +330,35 @@ namespace PYV_MaterialScanner
                                                 string ptsLog = resultPoints != null ? string.Join(",", resultPoints.Select(p => $"({p.X},{p.Y})")) : "N/A";
                                                 Log.Info($"Label Detected: {detectionMethod} ==> {decodedText} : Pts(local): [{ptsLog}]");
 
-                                                // Transform Points from Crop Coordinates to Full Frame Coordinates
+                                                // 3. 좌표 복원 (searchRoi가 사라졌으므로 labelRect 오프셋만 더함)
                                                 if (resultPoints != null && resultPoints.Length > 0)
                                                 {
                                                     _lastQrPoints = new OpenCvSharp.Point[resultPoints.Length];
                                                     for (int i = 0; i < resultPoints.Length; i++)
                                                     {
                                                         _lastQrPoints[i] = new OpenCvSharp.Point(
-                                                            resultPoints[i].X + searchRoi.X,
-                                                            resultPoints[i].Y + searchRoi.Y
-                                                            );
+                                                            resultPoints[i].X + labelRect.X,
+                                                            resultPoints[i].Y + labelRect.Y
+                                                        );
                                                     }
                                                 }
 
-                                                // UI Update every time a detection occurs(Cropped image)
+                                                // UI Update every time a detection occurs
                                                 UpdateCapturedImageSafe(uiLabelFrame);
 
                                                 // New detection - 성공적인 스캔 처리 (Save the Acumulated crop image)                                
-                                                if (LastScannedData != result.DecodedText)
+                                                if (LastScannedData != decodedText)
                                                 {
                                                     Log.Info($"[New] Label Detected:(in loop) {decodedText}");
-                                                    HandleSuccessfulScan(uiLabelFrame,decodedText, now);
+                                                    HandleSuccessfulScan(uiLabelFrame, decodedText, now);
                                                 }
+
                                             });
                                             uiLabelFrame.Dispose();
                                         }
                                         result.Dispose();
-                                        
                                     }
+
                                 }
                                 catch (Exception ex)
                                 {
@@ -459,9 +366,7 @@ namespace PYV_MaterialScanner
                                 }
                                 finally
                                 {
-                                    croppedFrame.Dispose();
-                                    fullFrameClone.Dispose();
-                                    
+                                    fullFrameClone.Dispose();                                    
                                     _isDetecting = false; // 잠금 해제
                                 }
                             });
@@ -481,8 +386,9 @@ namespace PYV_MaterialScanner
                     // Label tracking 파란색 영역 표시
                     if (_lastTrackedLabelRect.HasValue && (now - _lastQrScanTime) < _qrDisplayDuration)
                     {
-                        Cv2.Rectangle(currentFrame, _lastTrackedLabelRect.Value, new Scalar(0, 255, 0), 3);
-                        Cv2.PutText(currentFrame, "Label", new OpenCvSharp.Point(_lastTrackedLabelRect.Value.X, _lastTrackedLabelRect.Value.Y - 10), HersheyFonts.HersheySimplex, 1.0, new Scalar(0, 255, 0), 3);
+                        Cv2.Rectangle(currentFrame, _lastTrackedLabelRect.Value, new Scalar(255, 0, 0), 3);
+                        Cv2.PutText(currentFrame, "Label Area", 
+                            new OpenCvSharp.Point(_lastTrackedLabelRect.Value.X, _lastTrackedLabelRect.Value.Y - 10), HersheyFonts.HersheySimplex, 1.0, new Scalar(255, 0, 0), 3);
                     }
 
                     // DrawQrCodeBox, 마지막 감지 후 일정 시간 동안 QR 박스(또는 라벨 박스) 계속 표시
@@ -518,9 +424,9 @@ namespace PYV_MaterialScanner
         /// <summary>
         /// Streaming Main : Connect camera and display stream
         /// </summary>        
-        private Thread _captureThread;
+        private Thread? _captureThread;
         private readonly object _frameLock = new object();
-        private Mat _latestFrame = null; // 가장 최신 프레임만 보관
+        private Mat? _latestFrame = null; // 가장 최신 프레임만 보관
         private bool _newFrameAvailable = false;
         public async void StartStreaming()
         {
@@ -917,7 +823,11 @@ namespace PYV_MaterialScanner
                     {
                         if (LastScannedData != qrData)
                         {
-                            ScanHistory.Insert(0, $"{_lastQrDetectionTime} | {qrData}");
+                            ScanHistory.Insert(0, new ScanRecord 
+                            {
+                                Time = _lastQrDetectionTime.ToString("yyyy-MM-dd HH:mm:ss"), 
+                                Data = qrData 
+                            });
 
                             while (ScanHistory.Count > 50)
                             {
@@ -964,7 +874,7 @@ namespace PYV_MaterialScanner
         }
 
 
-        private void DrawQrCodeBox(Mat frame, OpenCvSharp.Point[] qrPoints, string qrData)
+        private void DrawQrCodeBox(Mat frame, OpenCvSharp.Point[] qrPoints, string? qrData)
         {
             try
             {
@@ -1206,9 +1116,47 @@ namespace PYV_MaterialScanner
             }
         }
 
+        /// <summary>
+        /// Hikvision 카메라 광학 줌 제어 (ISAPI PUT 요청)
+        /// </summary>
+        /// <param name="action">zoomin, zoomout, stop</param>
+        public async Task ControlHikvisionZoomAsync(string action)
+        {
+            if (_ptzHttpClient == null) return;
+
+            try
+            {
+                // 채널 1 기준 Continuous PTZ 엔드포인트
+                string url = $"http://{CAMERA_IP}/ISAPI/PTZCtrl/channels/1/continuous";
+
+                int zoomValue = 0;
+                if (action == "zoomin") zoomValue = 30;        // 줌 인 속도 (1 ~ 100)
+                else if (action == "zoomout") zoomValue = -30; // 줌 아웃 속도 (-1 ~ -100)
+                else if (action == "stop") zoomValue = 0;      // 줌 정지
+
+                string xmlBody = $@"<?xml version=""1.0"" encoding=""UTF-8""?><PTZData><pan>0</pan><tilt>0</tilt><zoom>{zoomValue}</zoom></PTZData>";
+
+                using var content = new StringContent(xmlBody, Encoding.UTF8, "application/xml");
+                HttpResponseMessage response = await _ptzHttpClient.PutAsync(url, content);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Log.Warn($"[Hikvision] Zoom {action} 실패: HTTP {response.StatusCode}");
+                }
+                else 
+                {
+                    Log.Info($"[Hikvision] Zoom {action} 성공: HTTP {response.StatusCode}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[Hikvision] Zoom {action} 예외: {ex.Message}");
+            }
+        }
+
         // INotifyPropertyChanged 구현
-        public event PropertyChangedEventHandler PropertyChanged;
-        protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        public event PropertyChangedEventHandler? PropertyChanged;
+        protected virtual void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
@@ -1240,13 +1188,14 @@ namespace PYV_MaterialScanner
     }
 
 
+
     public class RelayCommand : ICommand
     {
         private readonly Action _execute;
         public RelayCommand(Action execute) => _execute = execute;
 
-        public bool CanExecute(object parameter) => true;
-        public void Execute(object parameter) => _execute();
-        public event EventHandler CanExecuteChanged;
+        public bool CanExecute(object? parameter) => true;
+        public void Execute(object? parameter) => _execute();
+        public event EventHandler? CanExecuteChanged { add { } remove { } }
     }
 }

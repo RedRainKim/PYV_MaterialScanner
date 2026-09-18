@@ -9,6 +9,10 @@
     <ApplicationIcon>qr-scan.ico.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
+
+    <Version>4.0.0</Version>
+    <AssemblyVersion>4.0.0.0</AssemblyVersion>
+    <FileVersion>4.0.0.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

@@ -5,7 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Shapes;
+
 
 namespace PYV_MaterialScanner
 {
@@ -16,18 +16,12 @@ namespace PYV_MaterialScanner
     {
         private static readonly Logger log = LogManager.GetCurrentClassLogger();
 
-        // ROI 드래그 상태 변수
-        private bool _isDragging = false;
-        private System.Windows.Point _startPoint;
-        private System.Windows.Point _endPoint;
-
         public MainWindow()
         {
             InitializeComponent();
 
             // MainWindow의 DataContext를 MainViewModel 인스턴스로 설정
             this.DataContext = new MainViewModel();
-
         }
 
         // 윈도우가 닫힐 때 리소스 정리
@@ -69,159 +63,12 @@ namespace PYV_MaterialScanner
             }
         }
 
-        // ROI 드래그 시작
-        private void EditRoiButton_Click(object sender, RoutedEventArgs e)
+        private void ZoomButton_PreviewMouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
-            if (this.DataContext is MainViewModel viewModel)
+            if (this.DataContext is MainViewModel vm)
             {
-                viewModel.IsRoiEditMode = !viewModel.IsRoiEditMode;
-
-                if (!viewModel.IsRoiEditMode)
-                {
-                    // ROI 편집 모드 종료 시 선택 영역 초기화
-                    SelectionRectangle.Visibility = Visibility.Collapsed;
-                    HideHandles();
-                }
-                else
-                {
-                    log.Info("ROI Edit Mode activated. Drag on video to select area.");
-                }
-
+                vm.ZoomStopCommand.Execute(null);
             }
-        }
-
-        // ROI 드래그 시작 이벤트 핸들러
-        private void Canvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            if (this.DataContext is MainViewModel viewModel && viewModel.IsRoiEditMode)
-            {
-                _isDragging = true;
-                _startPoint = e.GetPosition(ROICanvas);
-
-                // Rectangle 초기화
-                Canvas.SetLeft(SelectionRectangle, _startPoint.X);
-                Canvas.SetTop(SelectionRectangle, _startPoint.Y);
-                SelectionRectangle.Width = 0;
-                SelectionRectangle.Height = 0;
-                SelectionRectangle.Visibility = Visibility.Visible;
-
-                ROICanvas.CaptureMouse();
-            }
-        }
-
-        // ROI 드래그 중 사각형 그리기
-        private void Canvas_MouseMove(object sender, MouseEventArgs e)
-        {
-            if (_isDragging && this.DataContext is MainViewModel viewModel && viewModel.IsRoiEditMode)
-            {
-                _endPoint = e.GetPosition(ROICanvas);
-
-                double x = Math.Min(_startPoint.X, _endPoint.X);
-                double y = Math.Min(_startPoint.Y, _endPoint.Y);
-                double width = Math.Abs(_endPoint.X - _startPoint.X);
-                double height = Math.Abs(_endPoint.Y - _startPoint.Y);
-
-                Canvas.SetLeft(SelectionRectangle, x);
-                Canvas.SetTop(SelectionRectangle, y);
-                SelectionRectangle.Width = width;
-                SelectionRectangle.Height = height;
-
-                // 핸들 위치 업데이트
-                UpdateHandles(x, y, width, height);
-            }
-        }
-
-        // ROI 드래그 종료
-        private void Canvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-        {
-            if (_isDragging && this.DataContext is MainViewModel viewModel)
-            {
-                _isDragging = false;
-                ROICanvas.ReleaseMouseCapture();
-
-                // 최종 위치 계산
-                _endPoint = e.GetPosition(ROICanvas);
-
-                double x = Math.Min(_startPoint.X, _endPoint.X);
-                double y = Math.Min(_startPoint.Y, _endPoint.Y);
-                double width = Math.Abs(_endPoint.X - _startPoint.X);
-                double height = Math.Abs(_endPoint.Y - _startPoint.Y);
-
-                // 최소 크기 체크 (너무 작은 영역 무시)
-                if (width < 20 || height < 20)
-                {
-                    SelectionRectangle.Visibility = Visibility.Collapsed;
-                    HideHandles();
-                    log.Info("ROI selection too small, ignored.");
-                    return;
-                }
-
-                // Canvas 크기 가져오기 (실제 비디오 표시 영역)
-                double canvasWidth = ROICanvas.ActualWidth;
-                double canvasHeight = ROICanvas.ActualHeight;
-
-                if (canvasWidth <= 0 || canvasHeight <= 0)
-                {
-                    log.Warn("Canvas size is zero, cannot calculate ROI.");
-                    return;
-                }
-
-                // 픽셀 좌표를 비율(%)로 변환
-                int topPercent = (int)Math.Round((y / canvasHeight) * 100);
-                int leftPercent = (int)Math.Round((x / canvasWidth) * 100);
-                int bottomPercent = (int)Math.Round(((canvasHeight - (y + height)) / canvasHeight) * 100);
-                int rightPercent = (int)Math.Round(((canvasWidth - (x + width)) / canvasWidth) * 100);
-
-                // 범위 제한 (0~70%)
-                topPercent = Math.Max(0, Math.Min(70, topPercent));
-                bottomPercent = Math.Max(0, Math.Min(70, bottomPercent));
-                leftPercent = Math.Max(0, Math.Min(70, leftPercent));
-                rightPercent = Math.Max(0, Math.Min(70, rightPercent));
-
-                // ViewModel에 적용
-                viewModel.CropRatioTop = topPercent;
-                viewModel.CropRatioBtm = bottomPercent;
-                viewModel.CropRatioLeft = leftPercent;
-                viewModel.CropRatioRight = rightPercent;
-
-                log.Info($"ROI applied - Top:{topPercent}%, Bottom:{bottomPercent}%, Left:{leftPercent}%, Right:{rightPercent}%");
-
-                // 편집 모드 자동 종료 (원하면 주석 처리)
-                viewModel.IsRoiEditMode = false;
-                SelectionRectangle.Visibility = Visibility.Collapsed;
-                HideHandles();
-            }
-        }
-
-        // 코너 핸들 위치 업데이트
-        private void UpdateHandles(double x, double y, double width, double height)
-        {
-            const double handleOffset = 6; // 핸들 중심 오프셋
-
-            Canvas.SetLeft(HandleTopLeft, x - handleOffset);
-            Canvas.SetTop(HandleTopLeft, y - handleOffset);
-
-            Canvas.SetLeft(HandleTopRight, x + width - handleOffset);
-            Canvas.SetTop(HandleTopRight, y - handleOffset);
-
-            Canvas.SetLeft(HandleBottomLeft, x - handleOffset);
-            Canvas.SetTop(HandleBottomLeft, y + height - handleOffset);
-
-            Canvas.SetLeft(HandleBottomRight, x + width - handleOffset);
-            Canvas.SetTop(HandleBottomRight, y + height - handleOffset);
-
-            HandleTopLeft.Visibility = Visibility.Visible;
-            HandleTopRight.Visibility = Visibility.Visible;
-            HandleBottomLeft.Visibility = Visibility.Visible;
-            HandleBottomRight.Visibility = Visibility.Visible;
-        }
-
-        private void HideHandles()
-        {
-            HandleTopLeft.Visibility = Visibility.Collapsed;
-            HandleTopRight.Visibility = Visibility.Collapsed;
-            HandleBottomLeft.Visibility = Visibility.Collapsed;
-            HandleBottomRight.Visibility = Visibility.Collapsed;
         }
 
         /// Bool to Color Converter for Edit ROI button

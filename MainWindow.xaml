@@ -5,279 +5,210 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:PYV_MaterialScanner"
         mc:Ignorable="d"
-        Title="PY-Vina RHF Charge Material Scanner" Height="800" Width="1280"
+        Title="PY-Vina RHF Charge Material Scanner" 
+        Width="1920" Height="1080"
         MinHeight="600" MinWidth="1000"
         WindowStartupLocation="CenterScreen"
         Background="#F0F0F0"
         UseLayoutRounding="True"
-        Icon="/qr-scan.ico.ico">
+        Icon="/qr-scan.ico.ico"
+        WindowStyle="None"
+        WindowState="Maximized"
+        ResizeMode="NoResize">
 
-
-    <!-- 
-    Main layout using a Grid with 5 rows:
-    0. Custom Title Bar (새로 추가됨)
-    1. Video Feed Area (takes up most of the space)
-    2. QR Code Data Area (fixed height for data display)
-    3. Status Bar (at the very bottom)
-    -->
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="50" />
-            <!-- 새로 추가된 커스텀 타이틀 바 영역 -->
-            <RowDefinition Height="340" />
-            <RowDefinition Height="200*"/>
-            <RowDefinition Height="160" />
-            <RowDefinition Height="70" />
+            <RowDefinition Height="720" /> 
+            <RowDefinition Height="100*" />            
+            <RowDefinition Height="50" />
         </Grid.RowDefinitions>
 
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="20" />
-            <ColumnDefinition Width="160"/>
-            <ColumnDefinition Width="200"/>
-            <ColumnDefinition Width="200"/>
-            <ColumnDefinition Width="200*"/>
-            <ColumnDefinition Width="480" />
+            <ColumnDefinition Width="640"/>
+            <ColumnDefinition Width="640"/>
+            <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
-
+        
         <!-- ============================================= -->
         <!--  0. CUSTOM TITLE BAR                          -->
         <!-- ============================================= -->
-        <Border Grid.Row="0" Grid.ColumnSpan="7" Background="#2C3E50">
-            <!-- Left 여백 2배 증가 (15 -> 30) -->
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="5,0,0,0">
-                <!-- 메인 아이콘 표시 (프로젝트 내에 icon.ico 파일이 있어야 합니다) -->
-                <Image Source="qr-scan.ico.ico" Width="28" Height="28" Margin="0,0,10,0"/>
+        <Border Grid.Row="0" Grid.ColumnSpan="4" Background="#2C3E50">
 
-                <TextBlock Text="PY-Vina RHF Charge Material Scanner ver_3.5" 
-                           Foreground="White" 
-                           FontSize="28" 
-                           FontWeight="Bold" 
-                           VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="5,5,5,5">
+                <!-- 메인 아이콘 표시 (프로젝트 내에 icon.ico 파일이 있어야 합니다) -->
+                <Image Source="qr-scan.ico.ico" Width="28" Height="28" Margin="10,0,10,0"/>
+
+                <TextBlock Text="{Binding AppTitleWithVersion}" 
+                               Foreground="White" 
+                               FontSize="28" 
+                               FontWeight="Bold" 
+                               VerticalAlignment="Center" />
             </StackPanel>
         </Border>
 
         <!-- ============================================= -->
-        <!--  1. UPPER AREA: CCTV VIDEO FEED               -->
+        <!--  1. MAIN CCTV VIDEO FEED (16:9 비율 유지)     -->
         <!-- ============================================= -->
-        <!-- Top, Left 여백 2배 증가 (10,10,5,5 -> 20,20,5,5) -->
-        <Border Grid.Row="1" Grid.Column="1" BorderBrush="Gray" 
-                BorderThickness="1" Margin="0,20,5,5" Background="Black"
-                Grid.RowSpan="2" Grid.ColumnSpan="4">
+        <Border Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" 
+                BorderBrush="Gray" BorderThickness="1" Background="Black" 
+                Margin="0,10,10,10">
             <Grid>
-                <!-- 
-                     UPDATED: Added RenderOptions.BitmapScalingMode="HighQuality" 
-                     This is critical for 4K cameras. Without this, downscaling 4K to the UI size 
-                     looks jagged/pixelated (Aliasing). HighQuality uses Fant/Bicubic resampling.
-                -->
+                <!-- Stretch="Uniform"으로 원본 비율 유지, HighQuality로 계단 현상 방지 -->
                 <Image x:Name="CameraFeedImage" 
                        Source="{Binding VideoSource}"
                        Stretch="Uniform" 
                        RenderOptions.BitmapScalingMode="HighQuality"/>
-                <!-- Canvas Overlay for ROI Selection -->
-                <Canvas x:Name="ROICanvas"
-                        Background="Transparent"
-                        MouseLeftButtonDown="Canvas_MouseLeftButtonDown"
-                        MouseMove="Canvas_MouseMove"
-                        MouseLeftButtonUp="Canvas_MouseLeftButtonUp"
-                        Cursor="Cross">
 
-                    <!-- ROI Selection Ractangle -->
-                    <Rectangle x:Name="SelectionRectangle"
-                               Stroke="Red"
-                               StrokeThickness="3"
-                               StrokeDashArray="5,3"
-                               Fill="#33FFFFFF"
-                               Visibility="Collapsed" />
-
-                    <!-- Corner Handles (4 circles) -->
-                    <Ellipse x:Name="HandleTopLeft" Fill="Cyan" Width="12" Height="12" 
-                             Visibility="Collapsed" Cursor="SizeNWSE"/>
-                    <Ellipse x:Name="HandleTopRight" Fill="Cyan" Width="12" Height="12" 
-                             Visibility="Collapsed" Cursor="SizeNESW"/>
-                    <Ellipse x:Name="HandleBottomLeft" Fill="Cyan" Width="12" Height="12" 
-                             Visibility="Collapsed" Cursor="SizeNESW"/>
-                    <Ellipse x:Name="HandleBottomRight" Fill="Cyan" Width="12" Height="12" 
-                             Visibility="Collapsed" Cursor="SizeNWSE"/>
-                </Canvas>
-
-                <!-- FPS Display -->
+                <!-- 상단 FPS 및 해상도 오버레이 표시 -->
                 <TextBlock Text="{Binding FpsText}" 
-                           Foreground="Yellow" 
-                           FontSize="20" 
-                           Margin="5,5,5,5"
+                           Foreground="Yellow" FontSize="18" Margin="10"
+                           VerticalAlignment="Top" HorizontalAlignment="Left"
                            IsHitTestVisible="False"/>
-
-                <!-- ROI Mode Indicator -->
-                <TextBlock x:Name="RoiModeIndicator"
-                           Text="🖱️ DRAG TO SELECT ROI AREA"
-                           Foreground="Red" 
-                           FontSize="30" 
-                           FontWeight="Bold"
-                           HorizontalAlignment="Center"
-                           VerticalAlignment="Top"
-                           Margin="0,30,0,0"
-                           IsHitTestVisible="False">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                            <Setter Property="Visibility" Value="Collapsed"/>
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsRoiEditMode}" Value="True">
-                                    <Setter Property="Visibility" Value="Visible"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBlock.Style>
-                    <TextBlock.Effect>
-                        <DropShadowEffect Color="Black" ShadowDepth="2" BlurRadius="4"/>
-                    </TextBlock.Effect>
-                </TextBlock>
             </Grid>
         </Border>
 
         <!-- ============================================= -->
-        <!--  1-2 UPPER AREA: CAPTURED IMAGE BOX           -->
+        <!--  1-2. HISTRORY LOG                            -->
         <!-- ============================================= -->
-        <!-- Top, Right 여백 2배 증가 (5,10,10,5 -> 5,20,20,5) -->
-        <Grid Grid.Row="1" Grid.Column="5" Margin="5,20,2,5">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
+        <GroupBox Grid.Row="1" Grid.Column="3" 
+                  Header="Scan History (Last 50)" 
+                  Margin="5,5,2,5" 
+                  FontWeight="Bold" 
+                  FontSize="18">
 
-            <!-- Edit ROI 버튼 및 수동 Capture Image 버튼을 그룹박스 바깥 상단에 배치 (너비 꽉 채움) -->
-            <Grid Grid.Row="0" Margin="0,0,0,5">
+            <ListView x:Name="ScanHistoryListView" 
+                      ItemsSource="{Binding ScanHistory}"
+                      ScrollViewer.VerticalScrollBarVisibility="Visible"
+                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                      Margin="5" 
+                      FontWeight="Normal" 
+                      FontSize="18"
+                      Background="#FFFFFF"
+                      BorderBrush="LightGray" 
+                      BorderThickness="1">
+                <!-- 각 행(Item) 높이 및 패딩 확보 -->
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="Height" Value="45"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="VerticalContentAlignment" Value="Center"/>
+                        <Setter Property="BorderBrush" Value="#E0E0E0"/>
+                        <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                    </Style>
+                </ListView.ItemContainerStyle>
+                
+                <ListView.View>
+                    <GridView>
+                        <!-- 첫 번째 열: 스캔 시간 -->
+                        <GridViewColumn Header="Time" Width="230" DisplayMemberBinding="{Binding Time}" />
+
+                        <!-- 두 번째 열: QR 스캔 데이터 -->
+                        <GridViewColumn Header="Scan Data" Width="340" DisplayMemberBinding="{Binding Data}" />
+                    </GridView>
+                </ListView.View>
+            </ListView>
+
+        </GroupBox>
+
+        <!-- ============================================= -->
+        <!--  2. 하단 스캔 결과 통합 패널 (캡처 이미지 + 텍스트) -->
+        <!-- ============================================= -->
+        <!-- 메인 카메라 영상 바로 아래(Row 2)에 위치하며, 너비 1280px(Column 1~2)을 모두 차지함 -->
+        <Border Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" 
+                BorderBrush="DarkGray" BorderThickness="0,2,0,0" 
+                Margin="0,5,10,5" Padding="0,5,0,0">
+
+            <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="480" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
-                <Button x:Name="EditRoiButton"
-                        Grid.Column="0"
-                        Content="✏️ Edit Scan Area"
-                        Click="EditRoiButton_Click"
-                        Padding="8,6"
-                        Margin="0,0,5,0"
-                        ToolTip="Click to enable selection mode, then drag on the video to select area"/>
+                <!-- 2-A. 왼쪽 캡처 이미지 창 (여백 거의 없이 꽉 차게) -->
+                <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="1" Background="Black" Margin="0,0,2,0">
+                    <Image x:Name="CapturedImageBox" 
+                           Source="{Binding CapturedImageSource}" 
+                           Stretch="Uniform" 
+                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                </Border>
 
-                <!-- Capture Image 버튼 -->
-                <Button x:Name="CaptureImageButton"
-                        Grid.Column="1"
-                        Content="📸 Capture Image"
-                        Command="{Binding CaptureImageCommand}"
-                        Background="#FFFFE0"
-                        BorderBrush="#FFD700"
-                        BorderThickness="1"
-                        FontWeight="Bold"
-                        Padding="8,6"
-                        Margin="5,0,0,0"
-                        ToolTip="Click to capture current video frame manually if QR is not scanned"/>
+                <!-- 2-B. 오른쪽 대형 QR 코드 텍스트 창 (여백 최소화) -->
+                <Border Grid.Column="1" BorderBrush="DarkRed" BorderThickness="2" Background="#FFF5F5" Margin="2,0,0,0">
+                    <Viewbox Stretch="Uniform" Margin="5">
+                        <TextBlock x:Name="LastScannedDataTextBlock"
+                                   Text="{Binding LastScannedData}" 
+                                   Foreground="DarkRed" 
+                                   FontWeight="Bold">
+                            <TextBlock.Effect>
+                                <DropShadowEffect Color="Black" Direction="315" ShadowDepth="1" BlurRadius="2" Opacity="0.3" />
+                            </TextBlock.Effect>
+                        </TextBlock>
+                    </Viewbox>
+                </Border>
             </Grid>
-
-            <!-- GroupBox는 이미지만 포함하도록 구성 -->
-            <GroupBox Grid.Row="1" 
-                      Header="Captured Image (Crop)" 
-                      FontWeight="Bold" FontSize="14">
-                <Grid Margin="5">
-                    <Border BorderBrush="Gray" BorderThickness="1" Background="Black">
-                        <Image x:Name="CapturedImageBox" 
-                               Stretch="Uniform" 
-                               Source="{Binding CapturedImageSource}"
-                               RenderOptions.BitmapScalingMode="HighQuality"/>
-                    </Border>
-                </Grid>
-            </GroupBox>
-        </Grid>
+        </Border>
 
         <!-- ============================================= -->
-        <!--  2. MIDDLE AREA: QR CODE DATA DISPLAY         -->
+        <!--  3. 하단 상태 표시줄 및 제어 버튼 (Row 3)           -->
         <!-- ============================================= -->
-        <!-- LEFT SIDE: Last Scanned QR Code Data -->
-        <!-- Left, Right 여백 2배 증가 (15,5,15,5 -> 30,5,30,5) -->
-        <GroupBox Grid.Row="3" Grid.Column="1" Header="Last Scanned QR Code"
-                  Grid.ColumnSpan="5"
-                  Margin="10,5,4,5" FontWeight="Bold" FontSize="20">
-            <Grid>
-                <Viewbox Stretch="Uniform">
-                    <TextBlock x:Name="LastScannedDataTextBlock"
-                           Text="{Binding LastScannedData}"
-                           TextWrapping="Wrap"
-                           Foreground="DarkRed"
-                           FontWeight="Bold">
-                        <TextBlock.Effect>
-                            <DropShadowEffect Color="Black"
-                                              Direction="315"
-                                              ShadowDepth="1"
-                                              BlurRadius="1" />
-                        </TextBlock.Effect>
-                    </TextBlock>
-                </Viewbox>
-            </Grid>
-        </GroupBox>
+        <Border Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" 
+                BorderBrush="DarkGray" BorderThickness="0,1,0,0" Background="#E0E0E0">
+            <DockPanel Margin="20,0" LastChildFill="False" VerticalAlignment="Center">
 
-        <!-- ============================================= -->
-        <!--  2-1. MIDDLE AREA: HISTROY OF SCANNED QR CODES-->
-        <!-- ============================================= -->
-        <!-- Right 여백 2배 증가 (5,5,10,5 -> 5,5,20,5) -->
-        <GroupBox Grid.Row="2" Grid.Column="5" 
-                  Header="Scan History(Last 50)" 
-                  Margin="5,5,2,5" 
-                  FontWeight="Bold" 
-                  FontSize="14">
-            <ListBox x:Name="ScanHistoryListBox" 
-                     ItemsSource="{Binding ScanHistory}"
-                     ScrollViewer.VerticalScrollBarVisibility="Visible"
-                     Margin="5" 
-                     FontWeight="Normal"
-                     Background="#FFFFFF"
-                     BorderBrush="LightGray"
-                     BorderThickness="1">
-            </ListBox>
-        </GroupBox>
-
-
-        <!-- ============================================= -->
-        <!--  3. VERY BOTTOM: STATUS AND CONTROLS          -->
-        <!-- ============================================= -->
-        <Border Grid.Row="4" Grid.Column="0" 
-            Grid.ColumnSpan="7" 
-            BorderBrush="DarkGray" 
-            BorderThickness="0,1,0,0" 
-            Background="#E0E0E0" Margin="0,20,0,0">
-            <!-- Left, Right, Bottom 여백 2배 증가 (10,5,10,5 -> 20,5,20,10) -->
-            <DockPanel Margin="20,5,20,10" LastChildFill="False">
-
-                <StackPanel Orientation="Horizontal" 
-                            DockPanel.Dock="Left" 
-                            VerticalAlignment="Center">
-                    <TextBlock Text="Camera Status: " 
-                               FontWeight="Bold"
-                               FontSize="20"/>
-                    <TextBlock x:Name="ConnectionStatusTextBlock"
-                               FontSize="20"
-                               Width="400"
+                <!-- 좌측: 카메라 연결 상태 표시 -->
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+                    <TextBlock Text="Camera Status: " FontWeight="Bold" FontSize="20" Foreground="#333333"/>
+                    <TextBlock x:Name="ConnectionStatusTextBlock" 
                                Text="{Binding CameraStatusText}" 
-                               Foreground="{Binding CameraStatusColor}" />
+                               Foreground="{Binding CameraStatusColor}" 
+                               FontSize="20" FontWeight="Bold" Width="300" />
                 </StackPanel>
 
-                <!-- 오른쪽 버튼들 -->
-                <StackPanel Orientation="Horizontal" 
-                            DockPanel.Dock="Right" 
-                            VerticalAlignment="Center" 
-                            Margin="20,0,0,0">
+                <!-- 우측: 제어 버튼 그룹 -->
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
 
-                    <Button x:Name="OpenFolderButton" 
-                            Content="Open Folder"
-                            Command="{Binding OpenFolderCommand}"
-                            Padding="10,5"
-                            Margin="0,0,10,0" Width="96"/>
-                    <Button x:Name="ReconnectButton" 
-                            Content="Re-connect Camera"
-                            Command="{Binding ConnectCommand}"
-                            Padding="10,5"
-                            Margin="10,0,0,0" />
+                    <!-- 광학 줌 제어 버튼 (누르고 있는 동안 연속 이동)[cite: 9] -->
+                    <RepeatButton x:Name="ZoomInBtn" Content="Zoom In ➕" 
+                                  Command="{Binding ZoomInCommand}" 
+                                  PreviewMouseLeftButtonUp="ZoomButton_PreviewMouseLeftButtonUp"                                                                  
+                                  Padding="15,10" Margin="0,0,5,0" 
+                                  FontSize="16" FontWeight="Bold" Background="#E6F2FF"/>
+
+                    <RepeatButton x:Name="ZoomOutBtn" Content="Zoom Out ➖" 
+                                  Command="{Binding ZoomOutCommand}"
+                                  PreviewMouseLeftButtonUp="ZoomButton_PreviewMouseLeftButtonUp"
+                                  Padding="15,10" Margin="0,0,25,0" 
+                                  FontSize="16" FontWeight="Bold" Background="#FFF0F0"/>
+                    
+                    <!-- 수동 캡처 버튼 (줌 컨트롤 앞쪽에 배치) -->
+                    <Button x:Name="CaptureImageButton" Content="📸 Capture Image" 
+                            Command="{Binding CaptureImageCommand}" 
+                            Padding="20,10" Margin="0,0,15,0" 
+                            FontSize="16" FontWeight="Bold" 
+                            Background="#FFFFE0" BorderBrush="#FFD700" BorderThickness="1"
+                            ToolTip="수동 이미지 캡처"/>
+
+                    <!-- 시스템 제어 버튼 -->
+                    <Button x:Name="OpenFolderButton" Content="📂 Open Folder" 
+                            Command="{Binding OpenFolderCommand}" 
+                            Padding="20,10" Margin="0,0,15,0" 
+                            FontSize="16" FontWeight="Bold" Background="#FFFFFF"/>
+
+                    <Button x:Name="ReconnectButton" Content="🔄 Re-connect Camera" 
+                            Command="{Binding ConnectCommand}" 
+                            Padding="20,10" 
+                            FontSize="16" FontWeight="Bold" Background="#FFFFFF"/>
                 </StackPanel>
             </DockPanel>
         </Border>
 
+
+
+
+
+
     </Grid>
+
 </Window>
