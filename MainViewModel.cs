@@ -37,13 +37,18 @@ namespace PYV_MaterialScanner
         private VideoCapture _capture = new();
         private bool _isCapturing = false;
         private DateTime _lastQrScanTime = DateTime.MinValue;
-        private readonly TimeSpan _qrScanInterval = TimeSpan.FromMilliseconds(300); // QR scan interval
+        private readonly TimeSpan _qrScanInterval = TimeSpan.FromMilliseconds(250); // QR scan interval
 
         // Last scaned QR code point
         private OpenCvSharp.Point[]? _lastQrPoints = null;
         private string? _lastQrText;
         private DateTime _lastQrDetectionTime = DateTime.MinValue;
         private readonly TimeSpan _qrDisplayDuration = TimeSpan.FromSeconds(5); // QR code box display duration
+
+        // --- 라벨 검출 및 오버레이 드로잉용 필드 ---
+        private OpenCvSharp.Rect? _lastTrackedLabelRect = null;
+        private DateTime _lastLabelTrackTime = DateTime.MinValue;
+        private readonly TimeSpan _labelDisplayDuration = TimeSpan.FromMilliseconds(500); // 0.5초 동안 박스 화면 유지
 
         // Reusable WriteableBitmap for better performance
         private WriteableBitmap? _writeableBitmap;
@@ -53,7 +58,7 @@ namespace PYV_MaterialScanner
         private volatile bool _isRendering = false;
 
         // 메모리 재사용을 위한 버퍼**
-        private byte[] _renderBuffer;
+        private byte[]? _renderBuffer;
 
         // UI Update throttling
         private DateTime _lastUiUpdate = DateTime.MinValue;
@@ -61,9 +66,6 @@ namespace PYV_MaterialScanner
 
         // 비동기 검출 상태 플래그 (중복 실행 방지)
         private volatile bool _isDetecting = false;
-
-        // 동적 라벨 Tracking
-        private OpenCvSharp.Rect? _lastTrackedLabelRect = null;
 
         // Hikvision ISAPI 설정값 로드
         private readonly string CAMERA_IP = ConfigurationManager.AppSettings["CameraIP"] ?? "192.168.1.100";
@@ -228,7 +230,7 @@ namespace PYV_MaterialScanner
             StartStreaming();
         }
 
-
+        ////////////////////////////////////////////////////////////////////////////////////////////////////
         /// <summary>
         /// Main processing loop
         /// </summary>
@@ -292,34 +294,50 @@ namespace PYV_MaterialScanner
                             {
                                 try
                                 {
-                                    // 실시간 하얀색 라벨 트래킹 시각화
+                                    // Bebug performance:
                                     //Log.Info("Check Thread speed of Tracking Lable (DetectWhiteLableArea)");
+
+                                    // 1. YOLO를 통해 4K 전체에서 하얀색 종이 라벨 사각 구역 검출
                                     OpenCvSharp.Rect? trackedLabelRoi = _hbeamTracker.DetectWhiteLableArea(fullFrameClone);
+
+                                    // DetectWhiteLableArea를 건너뛰고 전체 프레임을 바로 QR 디코더로 전달
+                                    //var result = _hbeamTracker.DetectQR(fullFrameClone);
 
                                     if (trackedLabelRoi.HasValue)
                                     {
-                                        // 추적된 라벨 영역 오버레이 표시용 업데이트(오프셋 없이 원본 기준 좌표)
                                         OpenCvSharp.Rect labelRect = trackedLabelRoi.Value;
 
-                                        //파란색 박스로 추적된 라벨 영역 그리기
+                                        // 2. 화면에 파란색 박스를 그리기 위해 전역 변수 업데이트
                                         _lastTrackedLabelRect = labelRect;
+                                        _lastLabelTrackTime = now;
 
-                                        // 라벨 영역만 타이트하게 크롭하여 디코더에 전달 (속도/인식률 극대화)
+                                        // 3. 찾은 라벨 영역만 타이트하게 크롭하여 디코더로 전달 (속도 & 인식률 극대화)
                                         using Mat labelCropMat = new Mat(fullFrameClone, labelRect).Clone();
 
-                                        // Scanning (3가지 모드)
-                                        //var result = _hbeamTracker.DetectOriginalSizeOnlyEachSteps(labelCropMat);
-                                        //var result = _hbeamTracker.DetectUpscaleSizeEachSteps(labelCropMat);
-                                        //var result = _hbeamTracker.DetectOriginalPreprocessEachSteps(labelCropMat);
-                                        var result = _hbeamTracker.DetectQR(labelCropMat, QrScanMode.Preprocess);
+                                        // [화면 출력] 라벨을 찾았을 때 우측 뷰포트에 즉시 표시 (디스크 저장 X, 순수 메모리 갱신)
+                                        // 비동기 안전성을 위해 Clone 객체를 전달
+                                        Mat previewMat = labelCropMat.Clone();
+                                        Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                                        {
+                                            try
+                                            {
+                                                UpdateCapturedImageSafe(previewMat);
+                                            }
+                                            finally
+                                            {
+                                                previewMat.Dispose();
+                                            }
+                                        }));
+
+                                        // 4. 잘라낸 라벨 조각에서 QR 코드 디코딩 수행
+                                        var result = _hbeamTracker.DetectQR(labelCropMat);
 
                                         // 결과 처리
-                                        if (result.IsDetected && result.DecodedText != null)
+                                        if (result.IsDetected && !string.IsNullOrEmpty(result.DecodedText))
                                         {
-                                            Mat? uiLabelFrame = result.CroppedLabel.Clone();
+                                            Mat? uiLabelFrame = result.CroppedLabel != null ? result.CroppedLabel.Clone() : null;
                                             var resultPoints = result.ResultPoints;
                                             string? decodedText = result.DecodedText;
-                                            string? detectionMethod = result.DetectionMethod;
 
                                             Application.Current.Dispatcher.Invoke(() =>
                                             {
@@ -328,9 +346,9 @@ namespace PYV_MaterialScanner
 
                                                 // Logging
                                                 string ptsLog = resultPoints != null ? string.Join(",", resultPoints.Select(p => $"({p.X},{p.Y})")) : "N/A";
-                                                Log.Info($"Label Detected: {detectionMethod} ==> {decodedText} : Pts(local): [{ptsLog}]");
+                                                Log.Info($"Label Detected: {decodedText} : Pts(local): [{ptsLog}]");
 
-                                                // 3. 좌표 복원 (searchRoi가 사라졌으므로 labelRect 오프셋만 더함)
+                                                // [좌표 복원] 크롭 이미지 기준 좌표에 labelRect 시작점(X, Y)을 더해 4K 전체 좌표로 변환
                                                 if (resultPoints != null && resultPoints.Length > 0)
                                                 {
                                                     _lastQrPoints = new OpenCvSharp.Point[resultPoints.Length];
@@ -343,26 +361,31 @@ namespace PYV_MaterialScanner
                                                     }
                                                 }
 
-                                                // UI Update every time a detection occurs
-                                                UpdateCapturedImageSafe(uiLabelFrame);
+                                                // UI 캡처 이미지 업데이트
+                                                if (uiLabelFrame != null)
+                                                {
+                                                    UpdateCapturedImageSafe(uiLabelFrame);
+                                                }
 
-                                                // New detection - 성공적인 스캔 처리 (Save the Acumulated crop image)                                
-                                                if (LastScannedData != decodedText)
+                                                // 신규 데이터 감지 시 히스토리 및 저장 처리
+                                                if (LastScannedData != decodedText && !string.IsNullOrEmpty(decodedText))
                                                 {
                                                     Log.Info($"[New] Label Detected:(in loop) {decodedText}");
-                                                    HandleSuccessfulScan(uiLabelFrame, decodedText, now);
+                                                    HandleSuccessfulScan(fullFrameClone.Clone(), decodedText, now);
                                                 }
 
                                             });
-                                            uiLabelFrame.Dispose();
+                                            uiLabelFrame?.Dispose();
                                         }
                                         result.Dispose();
+
                                     }
+                                                                       
 
                                 }
                                 catch (Exception ex)
                                 {
-                                    Log.Error($"Async Detection Error: {ex.Message}");
+                                    Log.Error($"Async Detection Scanning Error: {ex.Message}");
                                 }
                                 finally
                                 {
@@ -374,36 +397,33 @@ namespace PYV_MaterialScanner
                         }
                         catch (Exception ex)
                         {
-                            // ROI Crop 시점에서 에러가 나면 비동기 스레드가 아예 실행되지 않으므로 여기서 락을 강제로 풀어줌.
-                            Log.Error($"ROI Crop / Task Start Error: {ex.Message}");
+                            // 비동기 스레드가 아예 실행되지 않으므로 여기서 락을 강제로 풀어줌.
+                            Log.Error($"Task Start Error: {ex.Message}");
                             _isDetecting = false;
                         }
 
-
                     } // end if shouldscan
 
-
-                    // Label tracking 파란색 영역 표시
-                    if (_lastTrackedLabelRect.HasValue && (now - _lastQrScanTime) < _qrDisplayDuration)
+                    // 1. [YOLO] 라벨 구역 표시 (파란색 사각 박스)
+                    // 비동기 스레드가 _lastTrackedLabelRect를 갱신하면 유지 시간(_labelDisplayDuration) 동안 표시
+                    if (_lastTrackedLabelRect.HasValue && (DateTime.Now - _lastLabelTrackTime) < _labelDisplayDuration)
                     {
-                        Cv2.Rectangle(currentFrame, _lastTrackedLabelRect.Value, new Scalar(255, 0, 0), 3);
-                        Cv2.PutText(currentFrame, "Label Area", 
-                            new OpenCvSharp.Point(_lastTrackedLabelRect.Value.X, _lastTrackedLabelRect.Value.Y - 10), HersheyFonts.HersheySimplex, 1.0, new Scalar(255, 0, 0), 3);
+                        DrawLabelBox(currentFrame, _lastTrackedLabelRect.Value);
                     }
 
                     // DrawQrCodeBox, 마지막 감지 후 일정 시간 동안 QR 박스(또는 라벨 박스) 계속 표시
                     // (비동기 스레드가 _lastQrPoints를 업데이트하면 여기서 그려짐)
-                    if (_lastQrPoints != null && (now - _lastQrDetectionTime) < _qrDisplayDuration)
+                    if (_lastQrPoints != null && (DateTime.Now - _lastQrDetectionTime) < _qrDisplayDuration)
                     {
                         DrawQrCodeBox(currentFrame, _lastQrPoints, _lastQrText);
                     }
 
                     // Throttled UI update
                     // 영상 출력은 검출 로직과 상관없이 계속 수행됨 (끊김 방지)
-                    if ((now - _lastUiUpdate) >= _uiUpdateInterval)
+                    if ((DateTime.Now - _lastUiUpdate) >= _uiUpdateInterval)
                     {
                         UpdateVideoSource(currentFrame);
-                        _lastUiUpdate = now;
+                        _lastUiUpdate = DateTime.Now;
                     }
 
                 }
@@ -814,7 +834,7 @@ namespace PYV_MaterialScanner
                 _lastQrText = qrData;
 
                 // 이미지 저장 Mat 복사
-                Mat frameTosave = src.Clone();
+                Mat frameTosave = src;
 
                 // UI 업데이트
                 Application.Current.Dispatcher.BeginInvoke(() =>
@@ -932,6 +952,25 @@ namespace PYV_MaterialScanner
                 Log.Error($"Draw QR box error: {ex.Message}");
             }
         }
+
+        /// <summary>
+        /// YOLO 모델이 검출한 흰색 종이 라벨 구역을 파란색 직사각형 박스로 화면에 그립니다.
+        /// </summary>
+        private void DrawLabelBox(Mat frame, OpenCvSharp.Rect labelRect)
+        {
+            if (frame == null || frame.Empty()) return;
+
+            // 1. 파란색 사각형 테두리 (BGR 규격: (255, 0, 0), 두께: 3)
+            Cv2.Rectangle(frame, labelRect, new Scalar(255, 0, 0), 3);
+
+            // 2. 박스 상단 텍스트 "Label Area" (화면 위로 잘리지 않도록 안전 위치 지정)
+            int textY = Math.Max(30, labelRect.Y - 10);
+            OpenCvSharp.Point textPos = new OpenCvSharp.Point(labelRect.X, textY);
+
+            Cv2.PutText(frame, "Label Area", textPos,
+                        HersheyFonts.HersheySimplex, 0.9, new Scalar(255, 0, 0), 2);
+        }
+
 
         /// <summary>
         /// Helper to sort points clockwise around their center to prevent "bowtie" shapes.
@@ -1174,6 +1213,7 @@ namespace PYV_MaterialScanner
                     _capture?.Dispose();
                     _soundPlayer?.Dispose();
                     _hbeamTracker?.Dispose();
+                    _ptzHttpClient?.Dispose();
                 }
                 // 비관리 리소스 해제
                 _disposed = true;

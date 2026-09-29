@@ -22,6 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.30.0" />
     <PackageReference Include="NLog" Version="6.1.1" />
     <PackageReference Include="OpenCvSharp4" Version="4.13.0.20260308" />
     <PackageReference Include="OpenCvSharp4.Extensions" Version="4.13.0.20260308" />
@@ -39,10 +40,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="dingdong.wav">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Update="Models\detect.caffemodel">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="Models\detect.prototxt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Models\label_detector.onnx">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="Models\sr.caffemodel">

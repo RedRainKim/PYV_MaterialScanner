@@ -18,19 +18,19 @@
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="50" />
-            <RowDefinition Height="720" /> 
-            <RowDefinition Height="100*" />            
-            <RowDefinition Height="50" />
+            <RowDefinition Height="50" />   <!-- 0. 타이틀 바 -->
+            <RowDefinition Height="780" />  <!-- 1. 메인 CCTV 영상 (16:9 높이) -->
+            <RowDefinition Height="100*" /> <!-- 2. 하단 스캔 결과 영역 (약 180px) -->
+            <RowDefinition Height="70" />   <!-- 3. 상태 표시줄 및 버튼 -->
         </Grid.RowDefinitions>
 
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="20" />
-            <ColumnDefinition Width="640"/>
-            <ColumnDefinition Width="640"/>
-            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="20" />     <!-- 0. 좌측 여백 -->
+            <ColumnDefinition Width="693"/>     <!-- 1. 메인 CCTV 좌측 절반 -->
+            <ColumnDefinition Width="693"/>     <!-- 2. 메인 CCTV 우측 절반 (총 1386px) -->
+            <ColumnDefinition Width="*" />      <!-- 3. 우측 포커스 및 히스토리 패널 (약 514px) -->
         </Grid.ColumnDefinitions>
-        
+
         <!-- ============================================= -->
         <!--  0. CUSTOM TITLE BAR                          -->
         <!-- ============================================= -->
@@ -70,88 +70,78 @@
         </Border>
 
         <!-- ============================================= -->
-        <!--  1-2. HISTRORY LOG                            -->
+        <!--  2. 하단 마지막 스캔 결과 텍스트 (메인 비디오 폭 1386px과 일치) -->
         <!-- ============================================= -->
-        <GroupBox Grid.Row="1" Grid.Column="3" 
-                  Header="Scan History (Last 50)" 
-                  Margin="5,5,2,5" 
-                  FontWeight="Bold" 
-                  FontSize="18">
-
-            <ListView x:Name="ScanHistoryListView" 
-                      ItemsSource="{Binding ScanHistory}"
-                      ScrollViewer.VerticalScrollBarVisibility="Visible"
-                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                      Margin="5" 
-                      FontWeight="Normal" 
-                      FontSize="18"
-                      Background="#FFFFFF"
-                      BorderBrush="LightGray" 
-                      BorderThickness="1">
-                <!-- 각 행(Item) 높이 및 패딩 확보 -->
-                <ListView.ItemContainerStyle>
-                    <Style TargetType="ListViewItem">
-                        <Setter Property="Height" Value="45"/>
-                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                        <Setter Property="VerticalContentAlignment" Value="Center"/>
-                        <Setter Property="BorderBrush" Value="#E0E0E0"/>
-                        <Setter Property="BorderThickness" Value="0,0,0,1"/>
-                    </Style>
-                </ListView.ItemContainerStyle>
-                
-                <ListView.View>
-                    <GridView>
-                        <!-- 첫 번째 열: 스캔 시간 -->
-                        <GridViewColumn Header="Time" Width="230" DisplayMemberBinding="{Binding Time}" />
-
-                        <!-- 두 번째 열: QR 스캔 데이터 -->
-                        <GridViewColumn Header="Scan Data" Width="340" DisplayMemberBinding="{Binding Data}" />
-                    </GridView>
-                </ListView.View>
-            </ListView>
-
-        </GroupBox>
-
-        <!-- ============================================= -->
-        <!--  2. 하단 스캔 결과 통합 패널 (캡처 이미지 + 텍스트) -->
-        <!-- ============================================= -->
-        <!-- 메인 카메라 영상 바로 아래(Row 2)에 위치하며, 너비 1280px(Column 1~2)을 모두 차지함 -->
-        <Border Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" 
+        <Border Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" 
                 BorderBrush="DarkGray" BorderThickness="0,2,0,0" 
                 Margin="0,5,10,5" Padding="0,5,0,0">
-
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="480" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-
-                <!-- 2-A. 왼쪽 캡처 이미지 창 (여백 거의 없이 꽉 차게) -->
-                <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="1" Background="Black" Margin="0,0,2,0">
-                    <Image x:Name="CapturedImageBox" 
-                           Source="{Binding CapturedImageSource}" 
-                           Stretch="Uniform" 
-                           RenderOptions.BitmapScalingMode="HighQuality"/>
-                </Border>
-
-                <!-- 2-B. 오른쪽 대형 QR 코드 텍스트 창 (여백 최소화) -->
-                <Border Grid.Column="1" BorderBrush="DarkRed" BorderThickness="2" Background="#FFF5F5" Margin="2,0,0,0">
-                    <Viewbox Stretch="Uniform" Margin="5">
-                        <TextBlock x:Name="LastScannedDataTextBlock"
-                                   Text="{Binding LastScannedData}" 
-                                   Foreground="DarkRed" 
-                                   FontWeight="Bold">
-                            <TextBlock.Effect>
-                                <DropShadowEffect Color="Black" Direction="315" ShadowDepth="1" BlurRadius="2" Opacity="0.3" />
-                            </TextBlock.Effect>
-                        </TextBlock>
-                    </Viewbox>
-                </Border>
-            </Grid>
+            <Border BorderBrush="DarkRed" BorderThickness="2" Background="#FFF5F5" Margin="0,2,0,0">
+                <Viewbox Stretch="Uniform" Margin="30,10,30,10">
+                    <TextBlock x:Name="LastScannedDataTextBlock"
+                               Text="{Binding LastScannedData}" 
+                               Foreground="DarkRed" 
+                               FontWeight="Bold">
+                        <TextBlock.Effect>
+                            <DropShadowEffect Color="Black" Direction="315" ShadowDepth="1" BlurRadius="2" Opacity="0.3" />
+                        </TextBlock.Effect>
+                    </TextBlock>
+                </Viewbox>
+            </Border>
         </Border>
 
         <!-- ============================================= -->
-        <!--  3. 하단 상태 표시줄 및 제어 버튼 (Row 3)           -->
+        <!--  3. 우측 사이드 패널: 캡처 프리뷰 + 대형 히스토리 병합 -->
+        <!-- ============================================= -->
+        <Grid Grid.Row="1" Grid.RowSpan="2" Grid.Column="3" Margin="5,10,15,5">
+            <Grid.RowDefinitions>
+                <!-- 3-A. 상단: 캡처 라벨 이미지 창 (높이 고정 약 450px) -->
+                <RowDefinition Height="450" />
+                <!-- 3-B. 하단: Scan History (Row 1과 Row 2의 남은 전체 공간을 채움) -->
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- [상단] 타이틀 없이 순수 이미지만 100% 꽉 채운 검은색 뷰포트 -->
+            <Border Grid.Row="0" BorderBrush="Gray" BorderThickness="1" Background="Black">
+                <Image x:Name="CapturedImageBox" 
+                       Source="{Binding CapturedImageSource}" 
+                       Stretch="Uniform" 
+                       RenderOptions.BitmapScalingMode="HighQuality"/>
+            </Border>
+
+            <!-- [하단] 대형 Scan History 테이블 (타이틀 바 없이 리스트 헤더로 즉시 시작) -->
+            <Border Grid.Row="2" BorderBrush="LightGray" BorderThickness="1" Background="#FFFFFF">
+                <ListView x:Name="ScanHistoryListView" 
+                          ItemsSource="{Binding ScanHistory}"
+                          ScrollViewer.VerticalScrollBarVisibility="Visible"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                          FontWeight="Normal" 
+                          FontSize="18"
+                          Background="#FFFFFF"
+                          BorderThickness="0">
+
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="Height" Value="42"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="VerticalContentAlignment" Value="Center"/>
+                            <Setter Property="BorderBrush" Value="#E0E0E0"/>
+                            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                        </Style>
+                    </ListView.ItemContainerStyle>
+
+                    <ListView.View>
+                        <GridView>
+                            <!-- 컬럼 폭: Time(200), Scan Data(280) -->
+                            <GridViewColumn Header="Time" Width="200" DisplayMemberBinding="{Binding Time}" />
+                            <GridViewColumn Header="Scan Data" Width="280" DisplayMemberBinding="{Binding Data}" />
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+            </Border>
+        </Grid>
+
+        <!-- ============================================= -->
+        <!--  4. 하단 상태 표시줄 및 제어 버튼 (Row 3)       -->
         <!-- ============================================= -->
         <Border Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" 
                 BorderBrush="DarkGray" BorderThickness="0,1,0,0" Background="#E0E0E0">
@@ -169,20 +159,22 @@
                 <!-- 우측: 제어 버튼 그룹 -->
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
 
-                    <!-- 광학 줌 제어 버튼 (누르고 있는 동안 연속 이동)[cite: 9] -->
+                    <!-- 광학 줌 제어 버튼 (비활성화 상태 보존)[cite: 9] -->
                     <RepeatButton x:Name="ZoomInBtn" Content="Zoom In ➕" 
                                   Command="{Binding ZoomInCommand}" 
                                   PreviewMouseLeftButtonUp="ZoomButton_PreviewMouseLeftButtonUp"                                                                  
                                   Padding="15,10" Margin="0,0,5,0" 
-                                  FontSize="16" FontWeight="Bold" Background="#E6F2FF"/>
+                                  FontSize="16" FontWeight="Bold" Background="#E6F2FF"
+                                  Visibility="Collapsed"/>
 
                     <RepeatButton x:Name="ZoomOutBtn" Content="Zoom Out ➖" 
-                                  Command="{Binding ZoomOutCommand}"
+                                  Command="{Binding ZoomOutCommand}" 
                                   PreviewMouseLeftButtonUp="ZoomButton_PreviewMouseLeftButtonUp"
                                   Padding="15,10" Margin="0,0,25,0" 
-                                  FontSize="16" FontWeight="Bold" Background="#FFF0F0"/>
-                    
-                    <!-- 수동 캡처 버튼 (줌 컨트롤 앞쪽에 배치) -->
+                                  FontSize="16" FontWeight="Bold" Background="#FFF0F0"
+                                  Visibility="Collapsed"/>
+
+                    <!-- 수동 캡처 버튼 -->
                     <Button x:Name="CaptureImageButton" Content="📸 Capture Image" 
                             Command="{Binding CaptureImageCommand}" 
                             Padding="20,10" Margin="0,0,15,0" 
@@ -203,11 +195,6 @@
                 </StackPanel>
             </DockPanel>
         </Border>
-
-
-
-
-
 
     </Grid>
 
