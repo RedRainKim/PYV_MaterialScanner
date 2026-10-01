@@ -115,13 +115,13 @@
                           ScrollViewer.VerticalScrollBarVisibility="Visible"
                           ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           FontWeight="Normal" 
-                          FontSize="18"
+                          FontSize="14"
                           Background="#FFFFFF"
                           BorderThickness="0">
 
                     <ListView.ItemContainerStyle>
                         <Style TargetType="ListViewItem">
-                            <Setter Property="Height" Value="42"/>
+                            <Setter Property="Height" Value="36"/>
                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                             <Setter Property="VerticalContentAlignment" Value="Center"/>
                             <Setter Property="BorderBrush" Value="#E0E0E0"/>
@@ -132,8 +132,8 @@
                     <ListView.View>
                         <GridView>
                             <!-- 컬럼 폭: Time(200), Scan Data(280) -->
-                            <GridViewColumn Header="Time" Width="200" DisplayMemberBinding="{Binding Time}" />
-                            <GridViewColumn Header="Scan Data" Width="280" DisplayMemberBinding="{Binding Data}" />
+                            <GridViewColumn Header="Time" Width="160" DisplayMemberBinding="{Binding Time}" />
+                            <GridViewColumn Header="Scan Data" Width="300" DisplayMemberBinding="{Binding Data}" />
                         </GridView>
                     </ListView.View>
                 </ListView>
